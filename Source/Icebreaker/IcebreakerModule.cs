@@ -15,6 +15,9 @@ namespace Icebreaker
     /// </summary>
     public class IcebreakerModule : Module
     {
+        private const string StorageName = "Cosmos";
+        private static string databaseKind = CloudConfigurationManager.GetSetting("DatabaseKind");
+
         /// <inheritdoc/>
         protected override void Load(ContainerBuilder builder)
         {
@@ -28,8 +31,14 @@ namespace Icebreaker
             builder.RegisterType<IcebreakerBot>()
                 .SingleInstance();
 
-            builder.RegisterType<IcebreakerBotDataProvider>()
-                .SingleInstance();
+            if (databaseKind.Equals(StorageName) || databaseKind == string.Empty)
+            {
+                builder.RegisterType<CosmosDataProvider>().AsImplementedInterfaces();
+            }
+            else
+            {
+                builder.RegisterType<TableStorageDataProvider>().AsImplementedInterfaces();
+            }
         }
     }
 }

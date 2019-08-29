@@ -24,7 +24,7 @@ namespace Icebreaker
     /// </summary>
     public class IcebreakerBot
     {
-        private readonly IcebreakerBotDataProvider dataProvider;
+        private readonly IBotDataProvider dataProvider;
         private readonly TelemetryClient telemetryClient;
         private readonly int maxPairUpsPerTeam;
         private readonly string botDisplayName;
@@ -36,7 +36,7 @@ namespace Icebreaker
         /// </summary>
         /// <param name="dataProvider">The data provider to use</param>
         /// <param name="telemetryClient">The telemetry client to use</param>
-        public IcebreakerBot(IcebreakerBotDataProvider dataProvider, TelemetryClient telemetryClient)
+        public IcebreakerBot(IBotDataProvider dataProvider, TelemetryClient telemetryClient)
         {
             this.dataProvider = dataProvider;
             this.telemetryClient = telemetryClient;
@@ -74,7 +74,7 @@ namespace Icebreaker
 
                 foreach (var team in teams)
                 {
-                    this.telemetryClient.TrackTrace($"Pairing members of team {team.TeamId}");
+                    this.telemetryClient.TrackTrace($"Pairing members of team {team.Id}");
 
                     try
                     {

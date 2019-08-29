@@ -1,29 +1,26 @@
-﻿//----------------------------------------------------------------------------------------------
-// <copyright file="UserInfo.cs" company="Microsoft">
+﻿// <copyright file="UserEntity.cs" company="Microsoft">
 // Copyright (c) Microsoft. All rights reserved.
 // </copyright>
-//----------------------------------------------------------------------------------------------
 
 namespace Icebreaker.Helpers
 {
     using System.Collections.Generic;
-    using Microsoft.Azure.Documents;
+    using Microsoft.WindowsAzure.Storage.Table;
     using Newtonsoft.Json;
 
     /// <summary>
     /// Represents a user
     /// </summary>
-    public class UserInfo : Document
+    public class UserEntity : TableEntity
     {
         /// <summary>
-        /// Gets or sets the user's id in Teams (29:xxx).
-        /// This is also the <see cref="Resource.Id"/>.
+        /// Gets or sets the user's id in Teams (29:xxx)
         /// </summary>
         [JsonIgnore]
         public string UserId
         {
-            get { return this.Id; }
-            set { this.Id = value; }
+            get { return this.RowKey; }
+            set { this.RowKey = value; }
         }
 
         /// <summary>

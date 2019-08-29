@@ -1,9 +1,6 @@
-//----------------------------------------------------------------------------------------------
-// <copyright file="IcebreakerBotDataProvider.cs" company="Microsoft">
+﻿// <copyright file="TableStorageDataProvider.cs" company="Microsoft">
 // Copyright (c) Microsoft. All rights reserved.
 // </copyright>
-//----------------------------------------------------------------------------------------------
-
 namespace Icebreaker.Helpers
 {
     using System;
@@ -17,7 +14,7 @@ namespace Icebreaker.Helpers
     /// <summary>
     /// Data provider routines
     /// </summary>
-    public class IcebreakerBotDataProvider
+    public class TableStorageDataProvider : IBotDataProvider
     {
         // Request the minimum throughput by default
         private const int DefaultRequestThroughput = 400;
@@ -26,47 +23,48 @@ namespace Icebreaker.Helpers
 
         private readonly TelemetryClient telemetryClient;
         private readonly Lazy<Task> initializeTask;
-        private CloudTable teamsCollectionCloudTable;
-        private CloudTable usersCollectionCloudTable;
+        private CloudTable teamsCloudTable;
+        private CloudTable usersCloudTable;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="IcebreakerBotDataProvider"/> class.
+        /// Initializes a new instance of the <see cref="TableStorageDataProvider"/> class.
         /// </summary>
         /// <param name="telemetryClient">The telemetry client to use</param>
-        public IcebreakerBotDataProvider(TelemetryClient telemetryClient)
+        public TableStorageDataProvider(TelemetryClient telemetryClient)
         {
             this.telemetryClient = telemetryClient;
             this.initializeTask = new Lazy<Task>(() => this.InitializeAsync());
         }
 
-        /// <summary>
-        /// Updates team installation status in store. If the bot is installed, the info is saved, otherwise info for the team is deleted.
-        /// </summary>
-        /// <param name="team">The team installation info</param>
-        /// <param name="installed">Value that indicates if bot is installed</param>
-        /// <returns>Tracking task</returns>
+        /// <inheritdoc/>
         public async Task UpdateTeamInstallStatusAsync(TeamInstallInfo team, bool installed)
         {
             await this.EnsureInitializedAsync();
 
+            var teamEntity = new TeamInstallEntity
+            {
+                PartitionKey = TeamsPartitionKey,
+                InstallerName = team.InstallerName,
+                ServiceUrl = team.ServiceUrl,
+                TeamId = team.TeamId,
+                TenantId = team.TenantId
+            };
+
             if (installed)
             {
-                team.PartitionKey = TeamsPartitionKey;
-
-                TableOperation addOrUpdateOperation = TableOperation.InsertOrReplace(team);
-                await this.teamsCollectionCloudTable.ExecuteAsync(addOrUpdateOperation);
+                TableOperation addOrUpdateOperation = TableOperation.InsertOrReplace(teamEntity);
+                await this.teamsCloudTable.ExecuteAsync(addOrUpdateOperation);
             }
             else
             {
-                TableOperation deleteOperation = TableOperation.Delete(team);
-                await this.teamsCollectionCloudTable.ExecuteAsync(deleteOperation);
+                var entity = new DynamicTableEntity(TeamsPartitionKey, teamEntity.TeamId);
+                entity.ETag = "*";
+
+                await this.teamsCloudTable.ExecuteAsync(TableOperation.Delete(entity));
             }
         }
 
-        /// <summary>
-        /// Get the list of teams to which the app was installed.
-        /// </summary>
-        /// <returns>List of installed teams</returns>
+        /// <inheritdoc/>
         public async Task<IList<TeamInstallInfo>> GetInstalledTeamsAsync()
         {
             await this.EnsureInitializedAsync();
@@ -75,14 +73,23 @@ namespace Icebreaker.Helpers
 
             try
             {
-                TableQuery<TeamInstallInfo> projectionQuery = new TableQuery<TeamInstallInfo>();
+                TableQuery<TeamInstallEntity> projectionQuery = new TableQuery<TeamInstallEntity>();
                 TableContinuationToken token = null;
 
                 do
                 {
-                    TableQuerySegment<TeamInstallInfo> seg = await this.teamsCollectionCloudTable.ExecuteQuerySegmentedAsync(projectionQuery, token);
+                    TableQuerySegment<TeamInstallEntity> seg = await this.teamsCloudTable.ExecuteQuerySegmentedAsync(projectionQuery, token);
                     token = seg.ContinuationToken;
-                    installedTeams.AddRange(seg.Results);
+                    foreach (var teamInfo in seg.Results)
+                    {
+                        installedTeams.Add(new TeamInstallInfo
+                        {
+                            InstallerName = teamInfo.InstallerName,
+                            ServiceUrl = teamInfo.ServiceUrl,
+                            TeamId = teamInfo.TeamId,
+                            TenantId = teamInfo.TenantId
+                        });
+                    }
                 }
                 while (token != null);
 
@@ -96,11 +103,7 @@ namespace Icebreaker.Helpers
             return installedTeams;
         }
 
-        /// <summary>
-        /// Returns the team that the bot has been installed to
-        /// </summary>
-        /// <param name="teamId">The team id</param>
-        /// <returns>Team that the bot is installed to</returns>
+        /// <inheritdoc/>
         public async Task<TeamInstallInfo> GetInstalledTeamAsync(string teamId)
         {
             await this.EnsureInitializedAsync();
@@ -108,8 +111,8 @@ namespace Icebreaker.Helpers
             // Get team install info
             try
             {
-                var searchOperation = TableOperation.Retrieve<TeamInstallInfo>(TeamsPartitionKey, teamId);
-                TableResult searchResult = await this.teamsCollectionCloudTable.ExecuteAsync(searchOperation);
+                var searchOperation = TableOperation.Retrieve<TeamInstallEntity>(TeamsPartitionKey, teamId);
+                TableResult searchResult = await this.teamsCloudTable.ExecuteAsync(searchOperation);
                 return (TeamInstallInfo)searchResult.Result;
             }
             catch (Exception ex)
@@ -119,19 +122,15 @@ namespace Icebreaker.Helpers
             }
         }
 
-        /// <summary>
-        /// Get the stored information about the given user
-        /// </summary>
-        /// <param name="userId">User id</param>
-        /// <returns>User information</returns>
+        /// <inheritdoc/>
         public async Task<UserInfo> GetUserInfoAsync(string userId)
         {
             await this.EnsureInitializedAsync();
 
             try
             {
-                var searchOperation = TableOperation.Retrieve<UserInfo>(UsersPartitionKey, userId);
-                TableResult searchResult = await this.usersCollectionCloudTable.ExecuteAsync(searchOperation);
+                var searchOperation = TableOperation.Retrieve<UserEntity>(UsersPartitionKey, userId);
+                TableResult searchResult = await this.usersCloudTable.ExecuteAsync(searchOperation);
                 return (UserInfo)searchResult.Result;
             }
             catch (Exception ex)
@@ -141,19 +140,12 @@ namespace Icebreaker.Helpers
             }
         }
 
-        /// <summary>
-        /// Set the user info for the given user
-        /// </summary>
-        /// <param name="tenantId">Tenant id</param>
-        /// <param name="userId">User id</param>
-        /// <param name="optedIn">User opt-in status</param>
-        /// <param name="serviceUrl">User service URL</param>
-        /// <returns>Tracking task</returns>
+        /// <inheritdoc/>
         public async Task SetUserInfoAsync(string tenantId, string userId, bool optedIn, string serviceUrl)
         {
             await this.EnsureInitializedAsync();
 
-            var userInfo = new UserInfo
+            var userInfo = new UserEntity
             {
                 PartitionKey = UsersPartitionKey,
                 TenantId = tenantId,
@@ -163,7 +155,7 @@ namespace Icebreaker.Helpers
             };
 
             TableOperation addOrUpdateOperation = TableOperation.InsertOrReplace(userInfo);
-            await this.usersCollectionCloudTable.ExecuteAsync(addOrUpdateOperation);
+            await this.usersCloudTable.ExecuteAsync(addOrUpdateOperation);
         }
 
         /// <summary>
@@ -173,16 +165,16 @@ namespace Icebreaker.Helpers
         private async Task InitializeAsync()
         {
             this.telemetryClient.TrackTrace("Initializing data store");
-            CloudStorageAccount storageAccount = CloudStorageAccount.Parse(CloudConfigurationManager.GetSetting("StorageConnectionString"));
+            CloudStorageAccount storageAccount = CloudStorageAccount.Parse(CloudConfigurationManager.GetSetting("TableStorageConnectionString"));
             CloudTableClient cloudTableClient = storageAccount.CreateCloudTableClient();
-            this.teamsCollectionCloudTable = cloudTableClient.GetTableReference(StorageInfo.TeamsTableName);
-            this.usersCollectionCloudTable = cloudTableClient.GetTableReference(StorageInfo.UsersTableName);
+            this.teamsCloudTable = cloudTableClient.GetTableReference(StorageInfo.TeamsTableName);
+            this.usersCloudTable = cloudTableClient.GetTableReference(StorageInfo.UsersTableName);
 
             // Create the database if needed
             try
             {
-                await this.teamsCollectionCloudTable.CreateIfNotExistsAsync();
-                await this.usersCollectionCloudTable.CreateIfNotExistsAsync();
+                await this.teamsCloudTable.CreateIfNotExistsAsync();
+                await this.usersCloudTable.CreateIfNotExistsAsync();
             }
             catch (Exception ex)
             {
